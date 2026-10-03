@@ -1,0 +1,627 @@
+diff --git a/Makefile.3ds b/Makefile.3ds
+new file mode 100644
+index 0000000..78775c7
+--- /dev/null
++++ b/Makefile.3ds
+@@ -0,0 +1,183 @@
++#---------------------------------------------------------------------------------
++# This is devkitPro's standard 3DS homebrew Makefile template (see
++# https://github.com/devkitPro/3ds-examples), adapted for DungeonRush.
++# It builds a SEPARATE target from the desktop CMake build -- nothing
++# here touches CMakeLists.txt, so `cmake -B build && cmake --build
++# build` for desktop still works exactly as before.
++#
++# Usage (inside a devkitPro MSys2/shell with DEVKITPRO & DEVKITARM set):
++#   make -f Makefile.3ds
++#
++# This produces dungeon_rush.3dsx (run via a homebrew launcher) and,
++# if makerom/bannertool are on your PATH, dungeon_rush.cia.
++#---------------------------------------------------------------------------------
++.SUFFIXES:
++#---------------------------------------------------------------------------------
++
++ifeq ($(strip $(DEVKITARM)),)
++$(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
++endif
++
++TOPDIR ?= $(CURDIR)
++include $(DEVKITARM)/3ds_rules
++
++#---------------------------------------------------------------------------------
++TARGET      :=  dungeon_rush
++BUILD       :=  build3ds
++SOURCES     :=  src src/platform/3ds
++DATA        :=
++INCLUDES    :=  src
++# Staged by the romfs-stage rule below so that assets resolve at
++# "romfs:/res/..." -- matching RES_PREFIX in src/res.h, which prepends
++# "romfs:/" onto the existing literal "res/..." paths in src/res.c.
++ROMFS       :=  romfs3ds
++
++APP_TITLE       := DungeonRush
++APP_DESCRIPTION := Snake-inspired dungeon crawler, ported to 3DS
++APP_AUTHOR      := yujqiao (original); 3DS port by you
++
++#---------------------------------------------------------------------------------
++# options for code generation
++#---------------------------------------------------------------------------------
++ARCH    :=  -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
++
++# devkitPro's portlibs pkg-config, used below to pull in the exact
++# SDL2/SDL2_image/SDL2_mixer/SDL2_ttf cflags & libs (and whatever they
++# transitively depend on -- zlib, libpng, freetype, etc.) rather than
++# guessing library names/order by hand. If `make` errors that this
++# path doesn't exist, run:
++#   /opt/devkitpro/portlibs/3ds/bin/arm-none-eabi-pkg-config --list-all
++# to find the right prefix/names for your devkitPro version and
++# adjust PORTLIBS_PATH below.
++PORTLIBS_PATH   :=  $(DEVKITPRO)/portlibs/3ds
++PKGCONF         :=  PKG_CONFIG_PATH=$(PORTLIBS_PATH)/lib/pkgconfig $(PORTLIBS_PATH)/bin/arm-none-eabi-pkg-config
++SDL_PKGS        :=  sdl2 SDL2_image SDL2_mixer SDL2_ttf
++
++CFLAGS  :=  -g -Wall -O2 -mword-relocations -ffunction-sections -fdata-sections $(ARCH)
++CFLAGS  +=  $(INCLUDE) -D__3DS__
++CFLAGS  +=  $(shell $(PKGCONF) --cflags $(SDL_PKGS) 2>/dev/null)
++
++CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
++
++ASFLAGS :=  -g $(ARCH)
++LDFLAGS =   -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
++
++LIBS    :=  $(shell $(PKGCONF) --libs --static $(SDL_PKGS) 2>/dev/null) -lctru -lm
++
++#---------------------------------------------------------------------------------
++# list of directories containing libraries, this must be the top level containing
++# include and lib
++#---------------------------------------------------------------------------------
++LIBDIRS :=  $(CTRULIB) $(PORTLIBS_PATH)
++
++#---------------------------------------------------------------------------------
++# no real need to edit anything past this point unless you need to add additional
++# rules for different file extensions
++#---------------------------------------------------------------------------------
++ifneq ($(BUILD),$(notdir $(CURDIR)))
++#---------------------------------------------------------------------------------
++
++export OUTPUT   :=  $(CURDIR)/$(TARGET)
++export TOPDIR   :=  $(CURDIR)
++
++export VPATH    :=  $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
++                     $(foreach dir,$(DATA),$(CURDIR)/$(dir))
++
++export DEPSDIR  :=  $(CURDIR)/$(BUILD)
++
++CFILES      :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
++CPPFILES    :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
++SFILES      :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
++BINFILES    :=  $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
++
++#---------------------------------------------------------------------------------
++# use CXX for linking C++ projects, CC for standard C
++#---------------------------------------------------------------------------------
++ifeq ($(strip $(CPPFILES)),)
++export LD   :=  $(CC)
++else
++export LD   :=  $(CXX)
++endif
++#---------------------------------------------------------------------------------
++
++export OFILES_SOURCES  :=  $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
++export OFILES_BIN      :=  $(addsuffix .o,$(BINFILES))
++export OFILES           :=  $(OFILES_BIN) $(OFILES_SOURCES)
++export HFILES           :=  $(addsuffix .h,$(subst .,_,$(BINFILES)))
++
++export INCLUDE  :=  $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
++                     $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
++                     -I$(CURDIR)/$(BUILD)
++
++export LIBPATHS :=  $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
++
++export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
++
++ifeq ($(strip $(ICON)),)
++    icons := $(wildcard *.png)
++    ifneq (,$(findstring $(TARGET).png,$(icons)))
++        export APP_ICON := $(TOPDIR)/$(TARGET).png
++    else
++        ifneq (,$(findstring icon.png,$(icons)))
++            export APP_ICON := $(TOPDIR)/icon.png
++        endif
++    endif
++else
++    export APP_ICON := $(TOPDIR)/$(ICON)
++endif
++
++ifeq ($(strip $(NO_SMDH)),)
++    export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
++endif
++
++ifneq ($(ROMFS),)
++    export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
++endif
++
++.PHONY: all clean romfs-stage
++
++#---------------------------------------------------------------------------------
++all: romfs-stage $(BUILD) $(DEPSDIR)
++	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.3ds
++
++# Stages res/ under $(ROMFS)/res so the "romfs:/res/..." paths built
++# from RES_PREFIX in src/res.h resolve correctly. Re-copies every run;
++# res/ is ~9MB so this is fast, and it keeps the real res/ (shared
++# with the desktop CMake build) as the single source of truth.
++romfs-stage:
++	@mkdir -p $(ROMFS)
++	@cp -r res $(ROMFS)/res
++
++$(BUILD):
++	@mkdir -p $@
++
++ifneq ($(DEPSDIR),$(BUILD))
++$(DEPSDIR):
++	@mkdir -p $@
++endif
++
++#---------------------------------------------------------------------------------
++clean:
++	@echo clean ...
++	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(ROMFS)
++
++#---------------------------------------------------------------------------------
++else
++#---------------------------------------------------------------------------------
++# main targets
++#---------------------------------------------------------------------------------
++$(OUTPUT).3dsx  :   $(OUTPUT).elf $(_3DSXDEPS)
++
++$(OUTPUT).elf   :   $(OFILES)
++
++#---------------------------------------------------------------------------------
++%.bin.o %_bin.h :   %.bin
++#---------------------------------------------------------------------------------
++	@echo $(notdir $<)
++	@$(bin2o)
++
++-include $(DEPSDIR)/*.d
++
++#---------------------------------------------------------------------------------------
++endif
++#---------------------------------------------------------------------------------------
+diff --git a/src/game.c b/src/game.c
+index acf8f1d..04eeb7d 100644
+--- a/src/game.c
++++ b/src/game.c
+@@ -18,6 +18,9 @@
+ #include "res.h"
+ #include "sprite.h"
+ #include "types.h"
++#ifdef __3DS__
++#include "platform/3ds/input_3ds.h"
++#endif
+ #include "weapon.h"
+ 
+ #ifdef DBG
+@@ -987,6 +990,9 @@ void pauseGame() {
+   destroyText(text);
+   SDL_Event e;
+   for (bool quit = 0; !quit;) {
++#ifdef __3DS__
++    pump3DSInput();
++#endif
+     while (SDL_PollEvent(&e)) {
+       if (e.type == SDL_QUIT || e.type == SDL_KEYDOWN) {
+         quit = true;
+@@ -1037,6 +1043,9 @@ int wasdToDirection(int keyValue) {
+ bool handleLocalKeypress() {
+   static SDL_Event e;
+   bool quit = false;
++#ifdef __3DS__
++  pump3DSInput();
++#endif
+   while (SDL_PollEvent(&e)) {
+     if (e.type == SDL_QUIT) {
+       quit = true;
+diff --git a/src/main.c b/src/main.c
+index 8fa842f..87c7974 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -11,8 +11,19 @@
+ #include <assert.h>
+ #endif
+ 
++#ifdef __3DS__
++#include <3ds.h>
++#endif
++
+ int main(int argc, char** args) {
+   prngSrand(time(NULL));
++#ifdef __3DS__
++  // Mounts the res/ folder that's packed into the .3dsx's RomFS at
++  // build time (see Makefile.3ds's ROMFS variable) so the res.c
++  // asset paths -- now prefixed "romfs:/" via RES_PREFIX, see res.h
++  // -- resolve. Must happen before init()/loadMedia() touch any file.
++  romfsInit();
++#endif
+   // Start up SDL and create window
+   if (!init()) {
+     printf("Failed to initialize!\n");
+@@ -25,4 +36,7 @@ int main(int argc, char** args) {
+     }
+   }
+   cleanup();
++#ifdef __3DS__
++  romfsExit();
++#endif
+ }
+diff --git a/src/net.c b/src/net.c
+index a905e55..443dd8a 100644
+--- a/src/net.c
++++ b/src/net.c
+@@ -9,10 +9,66 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
+-#define CASSERT(EXPRESSION) switch (0) {case 0: case (EXPRESSION):;}
+-
+ TCPsocket lanServerSocket;
+ TCPsocket lanClientSocket;
++
++#ifdef __3DS__
++#include "platform/3ds/input_3ds.h"
++
++// LAN multiplayer needs SDL2_net, which isn't available in devkitPro's
++// 3ds-portlibs, so it's disabled here rather than half-implemented.
++// lanClientSocket stays NULL, so every "if (lanClientSocket)" guard
++// elsewhere in the codebase (game.c's handleLanKeypress dispatch,
++// sendPlayerMovePacket/sendGameOverPacket's early-outs) is already a
++// correct no-op without touching those files.
++static void showUnavailableMessage() {
++  extern SDL_Color WHITE;
++  Text* msg1 = createText("LAN play isn't available", WHITE);
++  Text* msg2 = createText("on this 3DS build (B to go back)", WHITE);
++  clearRenderer();
++  renderCenteredText(msg1, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 12, 1);
++  renderCenteredText(msg2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 12, 1);
++  SDL_RenderPresent(renderer);
++
++  bool quit = false;
++  SDL_Event e;
++  while (!quit) {
++    pump3DSInput();
++    while (SDL_PollEvent(&e)) {
++      if (e.type == SDL_QUIT ||
++          (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_ESCAPE ||
++                                      e.key.keysym.sym == SDLK_RETURN))) {
++        quit = true;
++      }
++    }
++  }
++  destroyText(msg1);
++  destroyText(msg2);
++  blackout();
++}
++
++void hostGame() { showUnavailableMessage(); }
++void joinGame(const char* hostname, Uint16 port) {
++  (void)hostname;
++  (void)port;
++  showUnavailableMessage();
++}
++void sendPlayerMovePacket(unsigned playerId, unsigned direction) {
++  (void)playerId;
++  (void)direction;
++}
++void sendGameOverPacket(unsigned playerId) { (void)playerId; }
++unsigned recvLanPacket(LanPacket* dest) {
++  (void)dest;
++  return 0;
++}
++
++#else  // !__3DS__
++
++#include <SDL_net.h>
++
++#define CASSERT(EXPRESSION) switch (0) {case 0: case (EXPRESSION):;}
++
+ SDLNet_SocketSet socketSet;
+ 
+ static void CHECK() {
+@@ -206,3 +262,5 @@ void joinGame(const char* hostname, Uint16 port) {
+   if (lanClientSocket) SDLNet_TCP_Close(lanClientSocket);
+   lanClientSocket = NULL;
+ }
++
++#endif  // __3DS__
+diff --git a/src/net.h b/src/net.h
+index 3e44335..b409bbe 100644
+--- a/src/net.h
++++ b/src/net.h
+@@ -1,7 +1,17 @@
+ #ifndef SNAKE__NET_H_
+ #define SNAKE__NET_H_
+ 
++#ifdef __3DS__
++// SDL2_net isn't part of devkitPro's 3ds-portlibs, so LAN multiplayer
++// is stubbed out on 3DS (see net.c). TCPsocket becomes an unused
++// pointer type so lanClientSocket/lanServerSocket still exist as
++// always-NULL globals and every existing "if (lanClientSocket)" check
++// elsewhere in the codebase keeps compiling unchanged.
++typedef void* TCPsocket;
++typedef struct { unsigned dummy; } IPaddress;
++#else
+ #include <SDL_net.h>
++#endif
+ 
+ #define LAN_LISTEN_PORT 21739
+ #define LAN_SEED_MASK 0x00ffffff
+diff --git a/src/platform/3ds/input_3ds.c b/src/platform/3ds/input_3ds.c
+new file mode 100644
+index 0000000..a9f8471
+--- /dev/null
++++ b/src/platform/3ds/input_3ds.c
+@@ -0,0 +1,48 @@
++#ifdef __3DS__
++
++#include "input_3ds.h"
++
++#include <3ds.h>
++#include <SDL.h>
++
++// Solo local play always drives player id 0, which reads the arrow
++// keys (see arrowsToDirection() in game.c) rather than WASD (that's
++// player id 1, used for local 2-player on a shared keyboard, which
++// doesn't apply on a handheld). So both the D-Pad and the Circle Pad
++// are mapped to the arrow keys here, giving the player a choice of
++// input without needing to touch game.c at all.
++//
++// Movement uses hidKeysDown() (edge-triggered: true only on the frame
++// a button transitions from up to down) rather than hidKeysHeld(),
++// matching the original desktop build's behavior of reacting to
++// SDL_KEYDOWN once per physical keypress rather than flooding a
++// direction change every frame a key is held.
++
++static void pushKey(SDL_Keycode sym) {
++  SDL_Event event;
++  SDL_zero(event);
++  event.type = SDL_KEYDOWN;
++  event.key.type = SDL_KEYDOWN;
++  event.key.state = SDL_PRESSED;
++  event.key.repeat = 0;
++  event.key.keysym.sym = sym;
++  SDL_PushEvent(&event);
++}
++
++void pump3DSInput() {
++  hidScanInput();
++  u32 down = hidKeysDown();
++
++  if (down & (KEY_DUP | KEY_CPAD_UP)) pushKey(SDLK_UP);
++  if (down & (KEY_DDOWN | KEY_CPAD_DOWN)) pushKey(SDLK_DOWN);
++  if (down & (KEY_DLEFT | KEY_CPAD_LEFT)) pushKey(SDLK_LEFT);
++  if (down & (KEY_DRIGHT | KEY_CPAD_RIGHT)) pushKey(SDLK_RIGHT);
++
++  // A confirms menu selections (mirrors desktop Return/Enter).
++  if (down & KEY_A) pushKey(SDLK_RETURN);
++  // B and Start both back out of a menu / pause the game (mirrors
++  // desktop Escape).
++  if (down & (KEY_B | KEY_START)) pushKey(SDLK_ESCAPE);
++}
++
++#endif  // __3DS__
+diff --git a/src/platform/3ds/input_3ds.h b/src/platform/3ds/input_3ds.h
+new file mode 100644
+index 0000000..f3632eb
+--- /dev/null
++++ b/src/platform/3ds/input_3ds.h
+@@ -0,0 +1,16 @@
++#ifndef SNAKE_PLATFORM_3DS_INPUT_H_
++#define SNAKE_PLATFORM_3DS_INPUT_H_
++#ifdef __3DS__
++
++// Scans the 3DS's physical buttons/pad and pushes equivalent SDL
++// keyboard events onto SDL's event queue. The rest of the codebase
++// only knows about SDL_KEYDOWN/SDLK_* (see game.c's
++// handleLocalKeypress()/arrowsToDirection(), and ui.c's menu
++// navigation), so it needs no changes at all to react to 3DS input.
++//
++// Call this once per frame, immediately before any SDL_PollEvent
++// loop that should see 3DS button presses.
++void pump3DSInput();
++
++#endif  // __3DS__
++#endif  // SNAKE_PLATFORM_3DS_INPUT_H_
+diff --git a/src/render.c b/src/render.c
+index 523f81c..8ac21f8 100644
+--- a/src/render.c
++++ b/src/render.c
+@@ -22,7 +22,11 @@ extern Effect effects[];
+ extern SDL_Color BLACK;
+ extern SDL_Color WHITE;
+ 
++#ifdef __3DS__
++const int SCALE_FACTOR = 1;
++#else
+ const int SCALE_FACTOR = 2;
++#endif
+ extern int texturesCount;
+ extern Texture textures[TEXTURES_SIZE];
+ extern int textsCount;
+diff --git a/src/res.c b/src/res.c
+index ef4945a..6aae643 100644
+--- a/src/res.c
++++ b/src/res.c
+@@ -19,52 +19,52 @@ const int n = SCREEN_WIDTH/UNIT;
+ const int m = SCREEN_HEIGHT/UNIT;
+ 
+ const char tilesetPath[TILESET_SIZE][PATH_LEN] = {
+-    "res/drawable/0x72_DungeonTilesetII_v1_3",
+-    "res/drawable/fireball_explosion1",
+-    "res/drawable/halo_explosion1",
+-    "res/drawable/halo_explosion2",
+-    "res/drawable/fireball",
+-    "res/drawable/floor_spike",
+-    "res/drawable/floor_exit",
+-    "res/drawable/HpMed",
+-    "res/drawable/SwordFx",
+-    "res/drawable/ClawFx",
+-    "res/drawable/Shine",
+-    "res/drawable/Thunder",
+-    "res/drawable/BloodBound",
+-    "res/drawable/arrow",
+-    "res/drawable/explosion-2",
+-    "res/drawable/ClawFx2",
+-    "res/drawable/Axe",
+-    "res/drawable/cross_hit",
+-    "res/drawable/blood",
+-    "res/drawable/SolidFx",
+-    "res/drawable/IcePick",
+-    "res/drawable/IceShatter",
+-    "res/drawable/Ice",
+-    "res/drawable/SwordPack",
+-    "res/drawable/HolyShield",
+-    "res/drawable/golden_cross_hit",
+-    "res/drawable/ui",
+-    "res/drawable/title",
+-    "res/drawable/purple_ball",
+-    "res/drawable/purple_exp",
+-    "res/drawable/staff",
+-    "res/drawable/Thunder_Yellow",
+-    "res/drawable/attack_up",
+-    "res/drawable/powerful_bow"};
+-const char fontPath[] = "res/font/m5x7.ttf";
+-const char textsetPath[] = "res/text.txt";
++    RES_PREFIX "res/drawable/0x72_DungeonTilesetII_v1_3",
++    RES_PREFIX "res/drawable/fireball_explosion1",
++    RES_PREFIX "res/drawable/halo_explosion1",
++    RES_PREFIX "res/drawable/halo_explosion2",
++    RES_PREFIX "res/drawable/fireball",
++    RES_PREFIX "res/drawable/floor_spike",
++    RES_PREFIX "res/drawable/floor_exit",
++    RES_PREFIX "res/drawable/HpMed",
++    RES_PREFIX "res/drawable/SwordFx",
++    RES_PREFIX "res/drawable/ClawFx",
++    RES_PREFIX "res/drawable/Shine",
++    RES_PREFIX "res/drawable/Thunder",
++    RES_PREFIX "res/drawable/BloodBound",
++    RES_PREFIX "res/drawable/arrow",
++    RES_PREFIX "res/drawable/explosion-2",
++    RES_PREFIX "res/drawable/ClawFx2",
++    RES_PREFIX "res/drawable/Axe",
++    RES_PREFIX "res/drawable/cross_hit",
++    RES_PREFIX "res/drawable/blood",
++    RES_PREFIX "res/drawable/SolidFx",
++    RES_PREFIX "res/drawable/IcePick",
++    RES_PREFIX "res/drawable/IceShatter",
++    RES_PREFIX "res/drawable/Ice",
++    RES_PREFIX "res/drawable/SwordPack",
++    RES_PREFIX "res/drawable/HolyShield",
++    RES_PREFIX "res/drawable/golden_cross_hit",
++    RES_PREFIX "res/drawable/ui",
++    RES_PREFIX "res/drawable/title",
++    RES_PREFIX "res/drawable/purple_ball",
++    RES_PREFIX "res/drawable/purple_exp",
++    RES_PREFIX "res/drawable/staff",
++    RES_PREFIX "res/drawable/Thunder_Yellow",
++    RES_PREFIX "res/drawable/attack_up",
++    RES_PREFIX "res/drawable/powerful_bow"};
++const char fontPath[] = RES_PREFIX "res/font/m5x7.ttf";
++const char textsetPath[] = RES_PREFIX "res/text.txt";
+ 
+ const int bgmNums = 4;
+ const char bgmsPath[AUDIO_BGM_SIZE][PATH_LEN] = {
+-  "res/audio/main_title.ogg",
+-  "res/audio/bg1.ogg",
+-  "res/audio/bg2.ogg",
+-  "res/audio/bg3.ogg"
++  RES_PREFIX "res/audio/main_title.ogg",
++  RES_PREFIX "res/audio/bg1.ogg",
++  RES_PREFIX "res/audio/bg2.ogg",
++  RES_PREFIX "res/audio/bg3.ogg"
+ };
+-const char soundsPath[PATH_LEN] = "res/audio/sounds";
+-const char soundsPathPrefix[PATH_LEN] = "res/audio/";
++const char soundsPath[PATH_LEN] = RES_PREFIX "res/audio/sounds";
++const char soundsPathPrefix[PATH_LEN] = RES_PREFIX "res/audio/";
+ // Gloabls
+ int texturesCount;
+ Texture textures[TEXTURES_SIZE];
+diff --git a/src/res.h b/src/res.h
+index 20b73f8..09eb7da 100644
+--- a/src/res.h
++++ b/src/res.h
+@@ -10,9 +10,27 @@
+ #define TEXTSET_SIZE 1024
+ #define TEXTURES_SIZE 1024
+ #define EFFECTS_SIZE 128
++#ifdef __3DS__
++// Native art tiles are 16x16 (see res/drawable/0x72_DungeonTilesetII_v1_3
++// manifest). On desktop these are drawn at 2x (see SCALE_FACTOR in
++// render.c) into a 1440x960 window. The 3DS top screen is a fixed
++// 400x240, so instead of rendering the desktop-sized scene and
++// downscaling it (soft/blurry, and expensive for the software
++// renderer), we draw pixel art at its native 1x size and let UNIT
++// (the map tile grid spacing) shrink to match. 400/16=25 and
++// 240/16=15 tiles, so the grid divides the screen exactly.
++#define UNIT 16
++#define SCREEN_WIDTH 400
++#define SCREEN_HEIGHT 240
++// RomFS assets are addressed as "romfs:/res/..." rather than the
++// desktop build's plain relative "res/..." paths.
++#define RES_PREFIX "romfs:/"
++#else
+ #define UNIT 32
+ #define SCREEN_WIDTH 1440
+ #define SCREEN_HEIGHT 960
++#define RES_PREFIX ""
++#endif
+ #define FONT_SIZE 32
+ // Resource ID
+ // Map Resource
+diff --git a/src/ui.c b/src/ui.c
+index 473ceeb..9ee4a5b 100644
+--- a/src/ui.c
++++ b/src/ui.c
+@@ -13,6 +13,9 @@
+ #include "net.h"
+ #include "render.h"
+ #include "res.h"
++#ifdef __3DS__
++#include "platform/3ds/input_3ds.h"
++#endif
+ #include "storage.h"
+ #include "text.h"
+ #include "types.h"
+@@ -31,6 +34,9 @@ int cursorPos;
+ bool moveCursor(int optsNum) {
+   SDL_Event e;
+   bool quit = false;
++#ifdef __3DS__
++  pump3DSInput();
++#endif
+   while (SDL_PollEvent(&e)) {
+     if (e.type == SDL_QUIT) {
+       quit = true;
+@@ -189,6 +195,15 @@ void launchLanGame() {
+   int opt = rangeOptions(LAN_HOSTGAME, LAN_JOINGAME);
+   blackout();
+   clearRenderer();
++#ifdef __3DS__
++  // hostGame() and joinGame() are both stubs on 3DS (see net.c) that
++  // just show a short "not available" message, so there's no point
++  // routing "join" through the IP-address text-entry screen below --
++  // it needs a physical keyboard's SDL_TEXTINPUT events, which the
++  // 3DS doesn't send.
++  (void)opt;
++  hostGame();
++#else
+   if (opt == 0) {
+     hostGame();
+   } else {
+@@ -197,6 +212,7 @@ void launchLanGame() {
+     joinGame(ip, LAN_LISTEN_PORT);
+     free(ip);
+   }
++#endif
+ }
+ 
+ int chooseOnLanUi() {

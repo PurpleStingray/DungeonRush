@@ -1,0 +1,183 @@
+#---------------------------------------------------------------------------------
+# This is devkitPro's standard 3DS homebrew Makefile template (see
+# https://github.com/devkitPro/3ds-examples), adapted for DungeonRush.
+# It builds a SEPARATE target from the desktop CMake build -- nothing
+# here touches CMakeLists.txt, so `cmake -B build && cmake --build
+# build` for desktop still works exactly as before.
+#
+# Usage (inside a devkitPro MSys2/shell with DEVKITPRO & DEVKITARM set):
+#   make -f Makefile.3ds
+#
+# This produces dungeon_rush.3dsx (run via a homebrew launcher) and,
+# if makerom/bannertool are on your PATH, dungeon_rush.cia.
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
+
+ifeq ($(strip $(DEVKITARM)),)
+$(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
+endif
+
+TOPDIR ?= $(CURDIR)
+include $(DEVKITARM)/3ds_rules
+
+#---------------------------------------------------------------------------------
+TARGET      :=  dungeon_rush
+BUILD       :=  build3ds
+SOURCES     :=  src src/platform/3ds
+DATA        :=
+INCLUDES    :=  src
+# Staged by the romfs-stage rule below so that assets resolve at
+# "romfs:/res/..." -- matching RES_PREFIX in src/res.h, which prepends
+# "romfs:/" onto the existing literal "res/..." paths in src/res.c.
+ROMFS       :=  romfs3ds
+
+APP_TITLE       := DungeonRush
+APP_DESCRIPTION := Snake-inspired dungeon crawler, ported to 3DS
+APP_AUTHOR      := yujqiao (original); 3DS port by you
+
+#---------------------------------------------------------------------------------
+# options for code generation
+#---------------------------------------------------------------------------------
+ARCH    :=  -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+
+# devkitPro's portlibs pkg-config, used below to pull in the exact
+# SDL2/SDL2_image/SDL2_mixer/SDL2_ttf cflags & libs (and whatever they
+# transitively depend on -- zlib, libpng, freetype, etc.) rather than
+# guessing library names/order by hand. If `make` errors that this
+# path doesn't exist, run:
+#   /opt/devkitpro/portlibs/3ds/bin/arm-none-eabi-pkg-config --list-all
+# to find the right prefix/names for your devkitPro version and
+# adjust PORTLIBS_PATH below.
+PORTLIBS_PATH   :=  $(DEVKITPRO)/portlibs/3ds
+PKGCONF         :=  PKG_CONFIG_PATH=$(PORTLIBS_PATH)/lib/pkgconfig $(PORTLIBS_PATH)/bin/arm-none-eabi-pkg-config
+SDL_PKGS := sdl SDL_image SDL_mixer SDL_ttf
+
+CFLAGS  :=  -g -Wall -O2 -mword-relocations -ffunction-sections -fdata-sections $(ARCH)
+CFLAGS  +=  $(INCLUDE) -D__3DS__
+CFLAGS  +=  $(shell $(PKGCONF) --cflags $(SDL_PKGS) 2>/dev/null)
+
+CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+
+ASFLAGS :=  -g $(ARCH)
+LDFLAGS =   -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+
+LIBS    :=  $(shell $(PKGCONF) --libs --static $(SDL_PKGS) 2>/dev/null) -lctru -lm
+
+#---------------------------------------------------------------------------------
+# list of directories containing libraries, this must be the top level containing
+# include and lib
+#---------------------------------------------------------------------------------
+LIBDIRS :=  $(CTRULIB) $(PORTLIBS_PATH)
+
+#---------------------------------------------------------------------------------
+# no real need to edit anything past this point unless you need to add additional
+# rules for different file extensions
+#---------------------------------------------------------------------------------
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+#---------------------------------------------------------------------------------
+
+export OUTPUT   :=  $(CURDIR)/$(TARGET)
+export TOPDIR   :=  $(CURDIR)
+
+export VPATH    :=  $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+                     $(foreach dir,$(DATA),$(CURDIR)/$(dir))
+
+export DEPSDIR  :=  $(CURDIR)/$(BUILD)
+
+CFILES      :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+CPPFILES    :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+SFILES      :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES    :=  $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+
+#---------------------------------------------------------------------------------
+# use CXX for linking C++ projects, CC for standard C
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(CPPFILES)),)
+export LD   :=  $(CC)
+else
+export LD   :=  $(CXX)
+endif
+#---------------------------------------------------------------------------------
+
+export OFILES_SOURCES  :=  $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES_BIN      :=  $(addsuffix .o,$(BINFILES))
+export OFILES           :=  $(OFILES_BIN) $(OFILES_SOURCES)
+export HFILES           :=  $(addsuffix .h,$(subst .,_,$(BINFILES)))
+
+export INCLUDE  :=  $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                     $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                     -I$(CURDIR)/$(BUILD)
+
+export LIBPATHS :=  $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
+
+ifeq ($(strip $(ICON)),)
+    icons := $(wildcard *.png)
+    ifneq (,$(findstring $(TARGET).png,$(icons)))
+        export APP_ICON := $(TOPDIR)/$(TARGET).png
+    else
+        ifneq (,$(findstring icon.png,$(icons)))
+            export APP_ICON := $(TOPDIR)/icon.png
+        endif
+    endif
+else
+    export APP_ICON := $(TOPDIR)/$(ICON)
+endif
+
+ifeq ($(strip $(NO_SMDH)),)
+    export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
+endif
+
+ifneq ($(ROMFS),)
+    export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
+endif
+
+.PHONY: all clean romfs-stage
+
+#---------------------------------------------------------------------------------
+all: romfs-stage $(BUILD) $(DEPSDIR)
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.3ds
+
+# Stages res/ under $(ROMFS)/res so the "romfs:/res/..." paths built
+# from RES_PREFIX in src/res.h resolve correctly. Re-copies every run;
+# res/ is ~9MB so this is fast, and it keeps the real res/ (shared
+# with the desktop CMake build) as the single source of truth.
+romfs-stage:
+	@mkdir -p $(ROMFS)
+	@cp -r res $(ROMFS)/res
+
+$(BUILD):
+	@mkdir -p $@
+
+ifneq ($(DEPSDIR),$(BUILD))
+$(DEPSDIR):
+	@mkdir -p $@
+endif
+
+#---------------------------------------------------------------------------------
+clean:
+	@echo clean ...
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(ROMFS)
+
+#---------------------------------------------------------------------------------
+else
+#---------------------------------------------------------------------------------
+# main targets
+#---------------------------------------------------------------------------------
+$(OUTPUT).3dsx  :   $(OUTPUT).elf $(_3DSXDEPS)
+
+$(OUTPUT).elf   :   $(OFILES)
+
+#---------------------------------------------------------------------------------
+%.bin.o %_bin.h :   %.bin
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	@$(bin2o)
+
+-include $(DEPSDIR)/*.d
+
+#---------------------------------------------------------------------------------------
+endif
+#---------------------------------------------------------------------------------------
