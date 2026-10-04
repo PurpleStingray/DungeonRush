@@ -52,7 +52,7 @@ For sure, some kinds of monsters have weapons that can put a DeBuff on you! *(Li
 I recommend using the included build script
 
 ## AI disclosure 
-I used sonnet v4 and deepseek v4.1 flash extensively during the making of this port. 
+I used sonnet v5.5 and deepseek v4.1 flash extensively during the making of this port. 
 
 ## License and Credits
 DungeonRush has mixed meida with 
